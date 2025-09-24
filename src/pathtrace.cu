@@ -6,6 +6,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/random.h>
 #include <thrust/remove.h>
+#include <thrust/sort.h>
 
 #include "sceneStructs.h"
 #include "scene.h"
@@ -19,6 +20,8 @@
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
+
+
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
 #if ERRORCHECK
@@ -48,6 +51,23 @@ thrust::default_random_engine makeSeededRandomEngine(int iter, int index, int de
     int h = utilhash((1 << 31) | (depth << 22) | iter) ^ utilhash(index);
     return thrust::default_random_engine(h);
 }
+
+//struct PathTerminated
+//{
+//    __host__ __device__
+//        bool operator()(const PathSegment& path) const
+//    {
+//        return path.remainingBounces == 0;
+//    }
+//};
+//
+//struct MaterialIdComparator {
+//    __host__ __device__
+//        bool operator()(const PathSegment& a, const PathSegment& b) const {
+//        return a.materialId < b.materialId;
+//    }
+//};
+
 
 //Kernel that writes the image to the OpenGL PBO directly.
 __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution, int iter, glm::vec3* image)
@@ -144,7 +164,7 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
         PathSegment& segment = pathSegments[index];
 
         segment.ray.origin = cam.position;
-        segment.color = glm::vec3(1.0f, 1.0f, 1.0f);
+        segment.throughput = glm::vec3(1.0f, 1.0f, 1.0f);
 
         // TODO: implement antialiasing by jittering the ray
         segment.ray.direction = glm::normalize(cam.view
@@ -240,7 +260,8 @@ __global__ void shadeFakeMaterial(
     int num_paths,
     ShadeableIntersection* shadeableIntersections,
     PathSegment* pathSegments,
-    Material* materials)
+    Material* materials,
+    int depth)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < num_paths)
@@ -251,7 +272,7 @@ __global__ void shadeFakeMaterial(
           // Set up the RNG
           // LOOK: this is how you use thrust's RNG! Please look at
           // makeSeededRandomEngine as well.
-            thrust::default_random_engine rng = makeSeededRandomEngine(iter, idx, 0);
+            thrust::default_random_engine rng = makeSeededRandomEngine(iter, idx, depth);
             thrust::uniform_real_distribution<float> u01(0, 1);
 
             Material material = materials[intersection.materialId];
@@ -259,15 +280,19 @@ __global__ void shadeFakeMaterial(
 
             // If the material indicates that the object was a light, "light" the ray
             if (material.emittance > 0.0f) {
-                pathSegments[idx].color *= (materialColor * material.emittance);
+                pathSegments[idx].radiance = (materialColor * material.emittance);
+				//pathSegments[idx].remainingBounces = 0;
             }
             // Otherwise, do some pseudo-lighting computation. This is actually more
             // like what you would expect from shading in a rasterizer like OpenGL.
             // TODO: replace this! you should be able to start with basically a one-liner
             else {
-                float lightTerm = glm::dot(intersection.surfaceNormal, glm::vec3(0.0f, 1.0f, 0.0f));
-                pathSegments[idx].color *= (materialColor * lightTerm) * 0.3f + ((1.0f - intersection.t * 0.02f) * materialColor) * 0.7f;
-                pathSegments[idx].color *= u01(rng); // apply some noise because why not
+                pathSegments[idx].radiance = glm::vec3(0.0f);
+				scatterRay(pathSegments[idx], pathSegments[idx].ray.origin + pathSegments[idx].ray.direction * intersection.t , intersection.surfaceNormal, material, rng);
+                //float lightTerm = glm::dot(intersection.surfaceNormal, glm::vec3(0.0f, 1.0f, 0.0f));
+                //pathSegments[idx].color *= (materialColor * lightTerm) * 0.3f + ((1.0f - intersection.t * 0.02f) * materialColor) * 0.7f;
+                //pathSegments[idx].throughput *= u01(rng); // apply some noise because why not
+                //pathSegments[idx].throughput *= material.throughput;
             }
             // If there was no intersection, color the ray black.
             // Lots of renderers use 4 channel color, RGBA, where A = alpha, often
@@ -275,7 +300,8 @@ __global__ void shadeFakeMaterial(
             // This can be useful for post-processing and image compositing.
         }
         else {
-            pathSegments[idx].color = glm::vec3(0.0f);
+            pathSegments[idx].throughput = glm::vec3(0.0f);
+            pathSegments[idx].remainingBounces = -1;
         }
     }
 }
@@ -288,7 +314,7 @@ __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iteration
     if (index < nPaths)
     {
         PathSegment iterationPath = iterationPaths[index];
-        image[iterationPath.pixelIndex] += iterationPath.color;
+        image[iterationPath.pixelIndex] += iterationPath.throughput * iterationPath.radiance;
     }
 }
 
@@ -386,9 +412,33 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             num_paths,
             dev_intersections,
             dev_paths,
-            dev_materials
+            dev_materials,
+            depth
         );
-        iterationComplete = true; // TODO: should be based off stream compaction results.
+		checkCUDAError("shade material");
+		cudaDeviceSynchronize();
+
+        /*PathSegment* new_end = thrust::remove_if(
+            thrust::device,
+            dev_paths,
+            dev_paths + num_paths,
+            PathTerminated()
+        );
+        num_paths = new_end - dev_paths;
+        checkCUDAError("thrust::remove_if");
+
+        if (num_paths < 0 || num_paths > pixelcount) {
+            fprintf(stderr, "ERROR: num_paths out of bounds: %d\n", num_paths);
+            exit(EXIT_FAILURE);
+        }
+
+        if (num_paths > 0)
+            thrust::sort(dev_paths, dev_paths + num_paths, MaterialIdComparator());
+        checkCUDAError("thrust::sort");*/
+
+        // TODO: should be based off stream compaction results.
+        if (depth > traceDepth)// || num_paths == 0)
+            iterationComplete = true;
 
         if (guiData != NULL)
         {

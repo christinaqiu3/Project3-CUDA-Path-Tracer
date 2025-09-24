@@ -71,9 +71,11 @@ struct RenderState
 struct PathSegment
 {
     Ray ray;
-    glm::vec3 color;
     int pixelIndex;
     int remainingBounces;
+    int materialId;
+    glm::vec3 throughput;
+    glm::vec3 radiance;
 };
 
 // Use with a corresponding PathSegment to do:
