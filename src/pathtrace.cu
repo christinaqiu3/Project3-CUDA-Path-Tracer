@@ -52,21 +52,21 @@ thrust::default_random_engine makeSeededRandomEngine(int iter, int index, int de
     return thrust::default_random_engine(h);
 }
 
-//struct PathTerminated
-//{
-//    __host__ __device__
-//        bool operator()(const PathSegment& path) const
-//    {
-//        return path.remainingBounces == 0;
-//    }
-//};
-//
-//struct MaterialIdComparator {
-//    __host__ __device__
-//        bool operator()(const PathSegment& a, const PathSegment& b) const {
-//        return a.materialId < b.materialId;
-//    }
-//};
+struct PathTerminated
+{
+    __host__ __device__
+        bool operator()(const PathSegment& path) const
+    {
+        return path.remainingBounces == 0;
+    }
+};
+
+struct MaterialIdComparator {
+    __host__ __device__
+        bool operator()(const PathSegment& a, const PathSegment& b) const {
+        return a.materialId < b.materialId;
+    }
+};
 
 
 //Kernel that writes the image to the OpenGL PBO directly.
@@ -418,7 +418,8 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 		checkCUDAError("shade material");
 		cudaDeviceSynchronize();
 
-        /*PathSegment* new_end = thrust::remove_if(
+		// Stream compact away terminated paths
+        PathSegment* new_end = thrust::remove_if(
             thrust::device,
             dev_paths,
             dev_paths + num_paths,
@@ -427,17 +428,19 @@ void pathtrace(uchar4* pbo, int frame, int iter)
         num_paths = new_end - dev_paths;
         checkCUDAError("thrust::remove_if");
 
-        if (num_paths < 0 || num_paths > pixelcount) {
-            fprintf(stderr, "ERROR: num_paths out of bounds: %d\n", num_paths);
-            exit(EXIT_FAILURE);
-        }
-
-        if (num_paths > 0)
-            thrust::sort(dev_paths, dev_paths + num_paths, MaterialIdComparator());
-        checkCUDAError("thrust::sort");*/
+		// Sort paths by material ID
+        if (num_paths >= 0 && num_paths <= pixelcount)
+            thrust::sort_by_key(
+                thrust::device,
+                dev_paths,
+                dev_paths + num_paths,
+                dev_intersections,
+                MaterialIdComparator()
+            );
+        checkCUDAError("thrust::sort");
 
         // TODO: should be based off stream compaction results.
-        if (depth > traceDepth)// || num_paths == 0)
+        if (depth > traceDepth || num_paths == 0)
             iterationComplete = true;
 
         if (guiData != NULL)
