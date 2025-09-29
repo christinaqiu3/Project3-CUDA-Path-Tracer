@@ -56,6 +56,21 @@ __host__ __device__ float boxIntersectionTest(
     return -1;
 }
 
+__host__ __device__
+void solveQuadratic(float A, float B, float C, float& t0, float& t1) {
+    float invA = 1.0f / A;
+    B *= invA;
+    C *= invA;
+
+    float neg_halfB = -B * 0.5f;
+    float u2 = neg_halfB * neg_halfB - C;
+    float u = sqrt(u2);
+
+    t0 = neg_halfB - u;
+    t1 = neg_halfB + u;
+}
+
+
 __host__ __device__ float sphereIntersectionTest(
     Geom sphere,
     Ray r,
@@ -63,7 +78,7 @@ __host__ __device__ float sphereIntersectionTest(
     glm::vec3 &normal,
     bool &outside)
 {
-    float radius = .5;
+    /*float radius = .5;
 
     glm::vec3 ro = multiplyMV(sphere.inverseTransform, glm::vec4(r.origin, 1.0f));
     glm::vec3 rd = glm::normalize(multiplyMV(sphere.inverseTransform, glm::vec4(r.direction, 0.0f)));
@@ -104,10 +119,53 @@ __host__ __device__ float sphereIntersectionTest(
 
     intersectionPoint = multiplyMV(sphere.transform, glm::vec4(objspaceIntersection, 1.f));
     normal = glm::normalize(multiplyMV(sphere.invTranspose, glm::vec4(objspaceIntersection, 0.f)));
-    if (!outside)
-    {
-        normal = -normal;
+    //if (!outside)
+    //{
+    //    normal = -normal;
+    //}
+
+    return glm::length(r.origin - intersectionPoint);
+    */
+    
+    float radius = 0.5f;
+
+    // Transform ray to object space
+    glm::vec3 ro = multiplyMV(sphere.inverseTransform, glm::vec4(r.origin, 1.0f));
+    glm::vec3 rd = glm::normalize(multiplyMV(sphere.inverseTransform, glm::vec4(r.direction, 0.0f)));
+
+    glm::vec3 pos = glm::vec3(0.0f); // Center of sphere in object space
+    glm::vec3 diff = ro - pos;
+
+    float a = 1.0f; // since rd is normalized
+    float b = 2.0f * glm::dot(rd, diff);
+    float c = glm::dot(diff, diff) - radius * radius;
+
+    float t0 = -1.0f, t1 = -1.0f;
+    solveQuadratic(a, b, c, t0, t1); // Po-Shen Loh solver
+
+    // Find the closest valid t
+    float t = -1.0f;
+    if (t0 > 0.0f && t1 > 0.0f) {
+        t = glm::min(t0, t1);
+        outside = true;
     }
+    else if (t0 > 0.0f || t1 > 0.0f) {
+        t = glm::max(t0, t1);
+        outside = false;
+    }
+    else {
+        return -1.0f; // No valid intersection
+    }
+
+    // Compute intersection point and normal in object space
+    glm::vec3 objSpaceIntersection = ro + t * rd;
+    glm::vec3 objSpaceNormal = glm::normalize(objSpaceIntersection);
+
+    // Transform back to world space
+    intersectionPoint = multiplyMV(sphere.transform, glm::vec4(objSpaceIntersection, 1.0f));
+    normal = glm::normalize(multiplyMV(sphere.invTranspose, glm::vec4(objSpaceNormal, 0.0f)));
+
+    // if (!outside) normal = -normal;
 
     return glm::length(r.origin - intersectionPoint);
 }
