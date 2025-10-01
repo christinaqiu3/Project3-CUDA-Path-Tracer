@@ -21,6 +21,9 @@
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
 
+#define PI 3.14159265358979323846
+#define PiOver2 1.57079632679489661923
+#define PiOver4 0.785398163397448309616
 
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
@@ -146,6 +149,23 @@ void pathtraceFree()
     checkCUDAError("pathtraceFree");
 }
 
+__host__ __device__ glm::vec2 sampleUniformDiskConcentric(float u1, float u2) {
+    glm::vec2 uOffset = 2.f * glm::vec2(u1, u2) - glm::vec2(1, 1);
+    if (uOffset.x == 0 && uOffset.y == 0)
+        return { 0, 0 };
+
+    float theta, r;
+    if (std::abs(uOffset.x) > std::abs(uOffset.y)) {
+        r = uOffset.x;
+        theta = PiOver4 * (uOffset.y / uOffset.x);
+    }
+    else {
+        r = uOffset.y;
+        theta = PiOver2 - PiOver4 * (uOffset.x / uOffset.y);
+    }
+    return r * glm::vec2(std::cos(theta), std::sin(theta));
+}
+
 /**
 * Generate PathSegments with rays from the camera through the screen into the
 * scene, which is the first bounce of rays.
@@ -159,22 +179,57 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
 
-    if (x < cam.resolution.x && y < cam.resolution.y) {
-        int index = x + (y * cam.resolution.x);
-        PathSegment& segment = pathSegments[index];
+    if (x >= cam.resolution.x || y >= cam.resolution.y) return;
 
-        segment.ray.origin = cam.position;
-        segment.throughput = glm::vec3(1.0f, 1.0f, 1.0f);
+    cam.focalDistance = glm::length(cam.lookAt - cam.position);
 
-        // TODO: implement antialiasing by jittering the ray
-        segment.ray.direction = glm::normalize(cam.view
-            - cam.right * cam.pixelLength.x * ((float)x - (float)cam.resolution.x * 0.5f)
-            - cam.up * cam.pixelLength.y * ((float)y - (float)cam.resolution.y * 0.5f)
+    int index = x + (y * cam.resolution.x);
+    PathSegment& segment = pathSegments[index];
+
+    thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
+    thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
+
+    // TODO: implement antialiasing by jittering the ray
+    float jitterX = u01(rng);
+    float jitterY = u01(rng);
+    float px = (float)x + jitterX;
+    float py = (float)y + jitterY;
+
+    glm::vec3 rayOrigin = cam.position;
+    segment.throughput = glm::vec3(1.0f, 1.0f, 1.0f);
+
+    
+    glm::vec3 rayDirection = glm::normalize(cam.view
+        - cam.right * cam.pixelLength.x * (px - (float)cam.resolution.x * 0.5f)
+        - cam.up * cam.pixelLength.y * (py - (float)cam.resolution.y * 0.5f)
+    );
+
+    if (cam.lensRadius > 0.0f) {
+		// Depth of field
+        glm::vec2 pLens = cam.lensRadius * sampleUniformDiskConcentric(
+            u01(rng),
+            u01(rng)
         );
 
-        segment.pixelIndex = index;
-        segment.remainingBounces = traceDepth;
+
+        float ft = cam.focalDistance / glm::dot(cam.view, rayDirection);
+        glm::vec3 pFocus = cam.position + ft * rayDirection;
+        rayOrigin += pLens.x * cam.right + pLens.y * cam.up;
+        rayDirection = glm::normalize(pFocus - rayOrigin);
     }
+    else
+    {
+		// Pinhole camera
+        
+
+    }
+    segment.ray.origin = rayOrigin;
+    segment.ray.direction = rayDirection;
+    //segment.ray.origin += EPSILON * segment.ray.direction;
+
+    segment.pixelIndex = index;
+    segment.remainingBounces = traceDepth;
+    
 }
 
 // TODO:
@@ -303,6 +358,8 @@ __global__ void shadeFakeMaterial(
             pathSegments[idx].throughput = glm::vec3(0.0f);
             pathSegments[idx].remainingBounces = -1;
         }
+
+
     }
 }
 
