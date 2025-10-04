@@ -461,11 +461,14 @@ __global__ void shadeFakeMaterial(
             if (d_environmentMapEnabled) {
                 glm::vec2 uv = sampleSphericalMap(pathSegments[idx].ray.direction);
                 glm::vec3 environmentColor = sampleEnvironmentMap(uv);
+                // Reinhard hdr color correction
+                environmentColor = environmentColor / (environmentColor + glm::vec3(1.0f));
                 pathSegments[idx].radiance = environmentColor;// * pathSegments[idx].throughput;
                 pathSegments[idx].remainingBounces = -1;
             }
             else {
                 pathSegments[idx].throughput = glm::vec3(0.0f);
+				pathSegments[idx].radiance = glm::vec3(0.0f);
                 pathSegments[idx].remainingBounces = -1;
             }
         }
