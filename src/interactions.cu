@@ -104,6 +104,29 @@ glm::vec3 sampleSpecularTrans(
     return albedo; // / fabs(glm::dot(wiW, n)); // why not albedo / fabs(wiW.z);
 }
 
+__host__ __device__ float subsurface(
+    const glm::vec3& lightDir,
+    const glm::vec3& normal,
+    const glm::vec3& viewVec,
+    float thickness,
+    const Material& m
+) {
+    glm::vec3 scatteredLightDir = lightDir + normal * m.distortion;
+    float lightReachingEye = powf(
+        glm::clamp(glm::dot(viewVec, -scatteredLightDir), 0.0f, 1.0f),
+        m.glow
+    ) * m.bssrdfScale;
+
+    float attenuation = 1.0f;
+#if ATTENUATION
+    attenuation = glm::max(0.0f, glm::dot(normal, lightDir) + glm::dot(viewVec, -lightDir));
+#endif
+
+    float totalLight = attenuation * (lightReachingEye + m.ambient) * thickness;
+    return totalLight;
+}
+
+
 
 __host__ __device__ void scatterRay(
     PathSegment & pathSegment,
@@ -142,4 +165,14 @@ __host__ __device__ void scatterRay(
     glm::vec3 gammaCorrect = pow(r, glm::vec3(1.0 / 2.2));
     pathSegment.throughput *= m.color; //gammaCorrect;
 	pathSegment.remainingBounces--;
+
+    // subsurface
+    if (m.hasSubsurface) {
+        glm::vec3 viewVec = -pathSegment.ray.direction;  // or normalize(-ray.dir before update)
+        glm::vec3 lightDir = -viewVec;                   // opposite side for approx
+        float thickness = m.thickness;
+        float sss = subsurface(lightDir, normal, viewVec, thickness, m);
+
+        pathSegment.throughput += m.color * sss;
+    }
 }

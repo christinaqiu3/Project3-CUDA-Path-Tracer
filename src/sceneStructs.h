@@ -47,6 +47,15 @@ struct Material
     float hasRefractive;
     float indexOfRefraction;
     float emittance;
+
+    // subsurface controls
+
+    bool hasSubsurface = false;
+    float thickness = 0.0f;
+    float distortion = 0.2f;
+    float glow = 6.0f;
+    float bssrdfScale = 3.0f;
+    float ambient = 0.0f;
 };
 
 struct Camera

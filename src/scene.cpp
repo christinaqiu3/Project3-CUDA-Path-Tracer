@@ -47,6 +47,7 @@ void Scene::loadFromJSON(const std::string& jsonName)
         {
             const auto& col = p["RGB"];
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
+
         }
         else if (p["TYPE"] == "Emitting")
         {
@@ -73,6 +74,20 @@ void Scene::loadFromJSON(const std::string& jsonName)
             newMaterial.hasRefractive = 1.f;
             newMaterial.indexOfRefraction = p["IOR"];
         }
+        else if (p["TYPE"] == "Subsurface")
+        {
+
+            const auto& col = p["RGB"];
+            newMaterial.color = glm::vec3(col[0], col[1], col[2]);
+
+            //subsurface
+			newMaterial.hasSubsurface = p["SUBSURFACE"];
+			newMaterial.thickness = p["THICKNESS"];
+			newMaterial.distortion = p["DISTORTION"];
+			newMaterial.glow = p["GLOW"];
+			newMaterial.bssrdfScale = p["BSSRDF_SCALE"];
+			newMaterial.ambient = p["AMBIENT"];
+		}
         else
         {
             std::cerr << "Unknown material type: " << p["TYPE"] << std::endl;

@@ -34,6 +34,18 @@
             "RGB":[0.98, 0.98, 0.98],
             "ROUGHNESS":0.0,
             "IOR":1.55
+        },
+        "plastic_subsurface":
+        {
+            "TYPE": "Subsurface",
+            "RGB": [0.98, 0.98, 0.98],
+            
+            "SUBSURFACE": true,
+            "THICKNESS": 0.1,
+            "DISTORTION": 0.2,
+            "GLOW": 6.0,
+            "BSSRDF_SCALE": 3.0,
+            "AMBIENT": 0.0
         }
     },
     "Camera":
@@ -100,7 +112,7 @@
         },
         {
             "TYPE":"sphere",
-            "MATERIAL":"specular_white",
+            "MATERIAL":"plastic_subsurface",
             "TRANS":[1.0,4.0,1.5],
             "ROTAT":[0.0,0.0,0.0],
             "SCALE":[3.0,3.0,3.0]
