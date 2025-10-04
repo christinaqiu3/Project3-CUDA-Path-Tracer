@@ -16,14 +16,25 @@
 #include "intersections.h"
 #include "interactions.h"
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_INCLUDE_STB_IMAGE_H
+#define STB_IMAGE_ENABLE_FLOAT
+#include "stb_image.h"
+#include <cuda_runtime.h>
+
+
 #define ERRORCHECK 1
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
 
-#define PI 3.14159265358979323846
 #define PiOver2 1.57079632679489661923
 #define PiOver4 0.785398163397448309616
+
+__device__ bool environmentMapEnabled;
+__device__ __constant__ bool d_environmentMapEnabled;
+
 
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
@@ -104,6 +115,9 @@ static Material* dev_materials = NULL;
 static PathSegment* dev_paths = NULL;
 static ShadeableIntersection* dev_intersections = NULL;
 // TODO: static variables for device memory, any extra info you need, etc
+__device__ glm::vec3* d_environmentMap = NULL;
+__device__ int d_envWidth;
+__device__ int d_envHeight;
 // ...
 
 void InitDataContainer(GuiDataContainer* imGuiData)
@@ -117,6 +131,32 @@ void pathtraceInit(Scene* scene)
 
     const Camera& cam = hst_scene->state.camera;
     const int pixelcount = cam.resolution.x * cam.resolution.y;
+
+	// added for environment map
+    std::string hdrPath = "../scenes/" + scene->state.environmentMapFile;
+
+    int envWidth, envHeight, envChannels;
+    float* h_envPixels = stbi_loadf(hdrPath.c_str(), &envWidth, &envHeight, &envChannels, 0);
+
+    if (h_envPixels == NULL) {
+        std::cout << "Failed to load environment map: " << hdrPath << std::endl;
+        std::cout << "STB failure reason: " << stbi_failure_reason() << std::endl;
+        bool f = false;
+        cudaMemcpyToSymbol(environmentMapEnabled, &f, sizeof(bool));
+    }
+    if (envChannels < 3) {
+        std::cout << "Environment map must have at least 3 channels (RGB)." << std::endl;
+        bool f = false;
+        cudaMemcpyToSymbol(environmentMapEnabled, &f, sizeof(bool));
+        stbi_image_free(h_envPixels);  // clean up what was loaded
+        return;  // PREVENT CRASH
+    }
+    // std::cout << "HDR loaded: " << envWidth << "x" << envHeight << " channels=" << envChannels << std::endl;
+
+    std::vector<glm::vec3> h_environmentMap; 
+
+    cudaMemcpyToSymbol(d_environmentMapEnabled, &environmentMapEnabled, sizeof(bool));
+
 
     cudaMalloc(&dev_image, pixelcount * sizeof(glm::vec3));
     cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
@@ -133,6 +173,41 @@ void pathtraceInit(Scene* scene)
     cudaMemset(dev_intersections, 0, pixelcount * sizeof(ShadeableIntersection));
 
     // TODO: initialize any extra device memeory you need
+    if (h_envPixels != NULL) {
+        // fill envBuffer from h_envPixels
+        std::vector<glm::vec3> envBuffer(envWidth * envHeight);
+
+        for (int i = 0; i < envWidth * envHeight; ++i) {
+            envBuffer[i] = glm::vec3(
+                h_envPixels[i * envChannels + 0],
+                h_envPixels[i * envChannels + 1],
+                h_envPixels[i * envChannels + 2]
+            );
+        }
+
+        // set env dims on device
+        cudaMemcpyToSymbol(d_envWidth, &envWidth, sizeof(int));
+        cudaMemcpyToSymbol(d_envHeight, &envHeight, sizeof(int));
+
+        // allocate env map
+        glm::vec3* d_env_dev_ptr = nullptr;
+
+        // allocate device memory and copy host envBuffer into it
+        size_t envBytes = envWidth * envHeight * sizeof(glm::vec3);
+        cudaMalloc(&d_env_dev_ptr, envBytes);
+        cudaMemcpy(d_env_dev_ptr, envBuffer.data(), envBytes, cudaMemcpyHostToDevice);
+
+        // store device pointer into the device symbol so kernels can use it
+        cudaMemcpyToSymbol(d_environmentMap, &d_env_dev_ptr, sizeof(glm::vec3*));
+        
+        //cudaMemcpy(d_environmentMap, envBuffer.data(), envWidth * envHeight * sizeof(glm::vec3), cudaMemcpyHostToDevice);
+        stbi_image_free(h_envPixels);
+    }
+    //else {
+    //    environmentMapEnabled = false;
+    //    d_environmentMap = nullptr;
+    //}
+
 
     checkCUDAError("pathtraceInit");
 }
@@ -145,6 +220,12 @@ void pathtraceFree()
     cudaFree(dev_materials);
     cudaFree(dev_intersections);
     // TODO: clean up any extra device memory you created
+    glm::vec3* h_env_dev_ptr = nullptr;
+    cudaMemcpyFromSymbol(&h_env_dev_ptr, d_environmentMap, sizeof(glm::vec3*));
+    if (h_env_dev_ptr != nullptr) {
+        cudaFree(h_env_dev_ptr);
+    }
+
 
     checkCUDAError("pathtraceFree");
 }
@@ -301,6 +382,28 @@ __global__ void computeIntersections(
     }
 }
 
+
+
+__device__ glm::vec3 sampleEnvironmentMap(const glm::vec2& uv) {
+    // Clamp UVs
+    float u = fminf(fmaxf(uv.x, 0.0f), 1.0f);
+    float v = fminf(fmaxf(uv.y, 0.0f), 1.0f);
+
+    int x = static_cast<int>(u * (d_envWidth - 1));
+    int y = static_cast<int>(v * (d_envHeight - 1));
+    int idx = y * d_envWidth + x;
+
+    return d_environmentMap[idx];
+}
+
+
+__host__ __device__
+glm::vec2 sampleSphericalMap(const glm::vec3& dir) {
+    float u = 0.5f + atan2(dir.z, dir.x) / (2.0f * PI);
+    float v = 0.5f - asin(dir.y) / PI;
+    return glm::vec2(u, v);
+}
+
 // LOOK: "fake" shader demonstrating what you might do with the info in
 // a ShadeableIntersection, as well as how to use thrust's random number
 // generator. Observe that since the thrust random number generator basically
@@ -355,10 +458,17 @@ __global__ void shadeFakeMaterial(
             // This can be useful for post-processing and image compositing.
         }
         else {
-            pathSegments[idx].throughput = glm::vec3(0.0f);
-            pathSegments[idx].remainingBounces = -1;
+            if (d_environmentMapEnabled) {
+                glm::vec2 uv = sampleSphericalMap(pathSegments[idx].ray.direction);
+                glm::vec3 environmentColor = sampleEnvironmentMap(uv);
+                pathSegments[idx].radiance = environmentColor;// * pathSegments[idx].throughput;
+                pathSegments[idx].remainingBounces = -1;
+            }
+            else {
+                pathSegments[idx].throughput = glm::vec3(0.0f);
+                pathSegments[idx].remainingBounces = -1;
+            }
         }
-
 
     }
 }
@@ -374,6 +484,7 @@ __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iteration
         image[iterationPath.pixelIndex] += iterationPath.throughput * iterationPath.radiance;
     }
 }
+
 
 /**
  * Wrapper for the __global__ call that sets up the kernel calls and does a ton

@@ -140,4 +140,9 @@ void Scene::loadFromJSON(const std::string& jsonName)
     int arraylen = camera.resolution.x * camera.resolution.y;
     state.image.resize(arraylen);
     std::fill(state.image.begin(), state.image.end(), glm::vec3());
+
+    if (data.contains("Environment") && data["Environment"].is_array() && !data["Environment"].empty()) {
+        state.environmentMapFile = data["Environment"][0]["FILE"];
+        environmentMapEnabled = true;//!state.environmentMapFile.empty();
+    }
 }

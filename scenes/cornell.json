@@ -105,5 +105,10 @@
             "ROTAT":[0.0,0.0,0.0],
             "SCALE":[3.0,3.0,3.0]
         }
+    ],
+    "Environment": [
+        {
+            "FILE": "qwantani_dusk_2_puresky_4k.hdr"
+        }
     ]
 }

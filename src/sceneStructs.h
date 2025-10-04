@@ -9,6 +9,8 @@
 
 #define BACKGROUND_COLOR (glm::vec3(0.0f))
 
+extern __device__ bool environmentMapEnabled;
+
 enum GeomType
 {
     SPHERE,
@@ -68,6 +70,7 @@ struct RenderState
     int traceDepth;
     std::vector<glm::vec3> image;
     std::string imageName;
+    std::string environmentMapFile;
 };
 
 struct PathSegment
