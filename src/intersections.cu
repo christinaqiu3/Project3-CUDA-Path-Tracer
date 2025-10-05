@@ -56,6 +56,7 @@ __host__ __device__ float boxIntersectionTest(
     return -1;
 }
 
+
 __host__ __device__
 void solveQuadratic(float A, float B, float C, float& t0, float& t1) {
     float invA = 1.0f / A;
@@ -71,12 +72,103 @@ void solveQuadratic(float A, float B, float C, float& t0, float& t1) {
 }
 
 
+__device__ bool intersectAABB(const Ray& ray, const AABB& box, float& tNear, float& tFar) {
+    tNear = -FLT_MAX;
+    tFar = FLT_MAX;
+    for (int i = 0; i < 3; i++) {
+        float t1 = (box.min[i] - ray.origin[i]) / ray.direction[i];
+        float t2 = (box.max[i] - ray.origin[i]) / ray.direction[i];
+        float tmin = fminf(t1, t2);
+        float tmax = fmaxf(t1, t2);
+        tNear = fmaxf(tNear, tmin);
+        tFar = fminf(tFar, tmax);
+        if (tNear > tFar) return false;
+    }
+    return true;
+}
+
+__host__ __device__ bool intersectRayTriangle(
+    const glm::vec3& orig,
+    const glm::vec3& dir,
+    const glm::vec3& v0,
+    const glm::vec3& v1,
+    const glm::vec3& v2,
+    float& t, glm::vec3& n)
+{
+    const float EPSILON = 1e-6f;
+    glm::vec3 edge1 = v1 - v0;
+    glm::vec3 edge2 = v2 - v0;
+    glm::vec3 h = glm::cross(dir, edge2);
+    float a = glm::dot(edge1, h);
+
+    if (fabs(a) < EPSILON) return false; // Ray parallel to triangle
+
+    float f = 1.0f / a;
+    glm::vec3 s = orig - v0;
+    float u = f * glm::dot(s, h);
+    if (u < 0.0f || u > 1.0f) return false;
+
+    glm::vec3 q = glm::cross(s, edge1);
+    float v = f * glm::dot(dir, q);
+    if (v < 0.0f || u + v > 1.0f) return false;
+
+    t = f * glm::dot(edge2, q);
+    if (t > EPSILON) {
+        n = glm::normalize(glm::cross(edge1, edge2));
+        return true;
+    }
+
+    return false;
+}
+__host__ __device__ float meshIntersectionTest(
+    const Geom geom,
+    const Ray r,
+    glm::vec3& intersect,
+    glm::vec3& normal,
+    bool& outside
+) {
+    float t_min = FLT_MAX;
+    bool hit = false;
+
+#if USE_AABB_CULLING
+    float t0, t1;
+    if (!intersectAABB(r, geom.mesh.bbox, t0, t1)) {
+        return -1.0f;
+    }
+#endif
+	
+    // Loop triangles
+    for (int i = 0; i < geom.mesh.indexCount; i++) {
+        glm::ivec3 tri = geom.mesh.indices[i];
+        glm::vec3 v0 = geom.mesh.vertices[tri.x];
+        glm::vec3 v1 = geom.mesh.vertices[tri.y];
+        glm::vec3 v2 = geom.mesh.vertices[tri.z];
+
+        glm::vec3 bary;
+        float t;
+        if (intersectRayTriangle(r.origin, r.direction, v0, v1, v2, t, bary)) {
+
+            if (t > 0.0f && t < t_min) {
+                t_min = t;
+                intersect = r.origin + t * r.direction;
+                normal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+                outside = glm::dot(r.direction, normal) < 0.0f;
+                hit = true;
+            }
+        }
+    }
+
+    return hit ? t_min : -1.0f;
+}
+
+
+
 __host__ __device__ float sphereIntersectionTest(
     Geom sphere,
     Ray r,
-    glm::vec3 &intersectionPoint,
-    glm::vec3 &normal,
-    bool &outside)
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside)
 {
     /*float radius = .5;
 
@@ -126,7 +218,7 @@ __host__ __device__ float sphereIntersectionTest(
 
     return glm::length(r.origin - intersectionPoint);
     */
-    
+
     float radius = 0.5f;
 
     // Transform ray to object space

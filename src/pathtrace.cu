@@ -16,12 +16,14 @@
 #include "intersections.h"
 #include "interactions.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_INCLUDE_STB_IMAGE_H
-#define STB_IMAGE_ENABLE_FLOAT
+//#define STB_IMAGE_IMPLEMENTATION
+//#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image.h"
+#include "stb_image_write.h"
+//#include "tiny_gltf.h"
 #include <cuda_runtime.h>
+
+
 
 
 #define ERRORCHECK 1
@@ -132,39 +134,119 @@ void pathtraceInit(Scene* scene)
     const Camera& cam = hst_scene->state.camera;
     const int pixelcount = cam.resolution.x * cam.resolution.y;
 
-	// added for environment map
-    std::string hdrPath = "../scenes/" + scene->state.environmentMapFile;
+    // --- ENVIRONMENT MAP ---
+    if (environmentMapEnabled) {
+        std::string hdrPath = "../scenes/" + scene->state.environmentMapFile;
 
-    int envWidth, envHeight, envChannels;
-    float* h_envPixels = stbi_loadf(hdrPath.c_str(), &envWidth, &envHeight, &envChannels, 0);
+        int envWidth, envHeight, envChannels;
+        float* h_envPixels = stbi_loadf(hdrPath.c_str(), &envWidth, &envHeight, &envChannels, 0);
 
-    if (h_envPixels == NULL) {
-        std::cout << "Failed to load environment map: " << hdrPath << std::endl;
-        std::cout << "STB failure reason: " << stbi_failure_reason() << std::endl;
-        bool f = false;
-        cudaMemcpyToSymbol(environmentMapEnabled, &f, sizeof(bool));
+        if (h_envPixels == NULL) {
+            std::cout << "Failed to load environment map: " << hdrPath << std::endl;
+            std::cout << "STB failure reason: " << stbi_failure_reason() << std::endl;
+            bool f = false;
+            cudaMemcpyToSymbol(environmentMapEnabled, &f, sizeof(bool));
+        }
+        if (envChannels < 3) {
+            std::cout << "Environment map must have at least 3 channels (RGB)." << std::endl;
+            bool f = false;
+            cudaMemcpyToSymbol(environmentMapEnabled, &f, sizeof(bool));
+            stbi_image_free(h_envPixels);  // clean up what was loaded
+            return;  // PREVENT CRASH
+        }
+        // std::cout << "HDR loaded: " << envWidth << "x" << envHeight << " channels=" << envChannels << std::endl;
+
+        std::vector<glm::vec3> h_environmentMap;
+
+        cudaMemcpyToSymbol(d_environmentMapEnabled, &environmentMapEnabled, sizeof(bool));
+
+
+
+        // initialize memory
+        if (h_envPixels != NULL) {
+            // fill envBuffer from h_envPixels
+            std::vector<glm::vec3> envBuffer(envWidth * envHeight);
+
+            for (int i = 0; i < envWidth * envHeight; ++i) {
+                envBuffer[i] = glm::vec3(
+                    h_envPixels[i * envChannels + 0],
+                    h_envPixels[i * envChannels + 1],
+                    h_envPixels[i * envChannels + 2]
+                );
+            }
+
+            // set env dims on device
+            cudaMemcpyToSymbol(d_envWidth, &envWidth, sizeof(int));
+            cudaMemcpyToSymbol(d_envHeight, &envHeight, sizeof(int));
+
+            // allocate env map
+            glm::vec3* d_env_dev_ptr = nullptr;
+
+            // allocate device memory and copy host envBuffer into it
+            size_t envBytes = envWidth * envHeight * sizeof(glm::vec3);
+            cudaMalloc(&d_env_dev_ptr, envBytes);
+            cudaMemcpy(d_env_dev_ptr, envBuffer.data(), envBytes, cudaMemcpyHostToDevice);
+
+            // store device pointer into the device symbol so kernels can use it
+            cudaMemcpyToSymbol(d_environmentMap, &d_env_dev_ptr, sizeof(glm::vec3*));
+
+            //cudaMemcpy(d_environmentMap, envBuffer.data(), envWidth * envHeight * sizeof(glm::vec3), cudaMemcpyHostToDevice);
+            stbi_image_free(h_envPixels);
+        }
     }
-    if (envChannels < 3) {
-        std::cout << "Environment map must have at least 3 channels (RGB)." << std::endl;
-        bool f = false;
-        cudaMemcpyToSymbol(environmentMapEnabled, &f, sizeof(bool));
-        stbi_image_free(h_envPixels);  // clean up what was loaded
-        return;  // PREVENT CRASH
+	// --- ENVIRONMENT MAP ---
+
+
+
+    std::vector<glm::vec3> h_vertices;
+    std::vector<glm::ivec3> h_indices;
+
+    Geom h_geom;
+    Mesh h_mesh;
+
+    // Extract mesh data from scene
+    for (const Geom& g : scene->geoms) {
+        if (g.type == MESH) {
+            h_vertices = std::vector<glm::vec3>(g.mesh.vertices, g.mesh.vertices + g.mesh.vertexCount);
+            h_indices = std::vector<glm::ivec3>(g.mesh.indices, g.mesh.indices + g.mesh.indexCount);
+            h_geom = g; // Copy the base Geom
+            break;
+        }
     }
-    // std::cout << "HDR loaded: " << envWidth << "x" << envHeight << " channels=" << envChannels << std::endl;
 
-    std::vector<glm::vec3> h_environmentMap; 
+    // Allocate mesh vertex/index data on device
+    Mesh d_mesh;
+    cudaMalloc(&d_mesh.vertices, h_vertices.size() * sizeof(glm::vec3));
+    cudaMemcpy(d_mesh.vertices, h_vertices.data(), h_vertices.size() * sizeof(glm::vec3), cudaMemcpyHostToDevice);
 
-    cudaMemcpyToSymbol(d_environmentMapEnabled, &environmentMapEnabled, sizeof(bool));
+    cudaMalloc(&d_mesh.indices, h_indices.size() * sizeof(glm::ivec3));
+    cudaMemcpy(d_mesh.indices, h_indices.data(), h_indices.size() * sizeof(glm::ivec3), cudaMemcpyHostToDevice);
 
+    d_mesh.indexCount = h_indices.size();
+    d_mesh.vertexCount = h_vertices.size();
+    d_mesh.bbox = h_geom.mesh.bbox;
+    d_mesh.materialId = h_geom.materialid;
+
+    // Assign the device mesh into h_geom, then copy it to device
+    h_geom.mesh = d_mesh;
+
+    // Copy all Geoms to device
+    cudaMalloc(&dev_geoms, scene->geoms.size() * sizeof(Geom));
+    std::vector<Geom> h_geoms = scene->geoms;
+    h_geoms[0] = h_geom; // Replace the original mesh geom with the one that has device pointers
+    cudaMemcpy(dev_geoms, h_geoms.data(), h_geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
+
+
+
+    // ---
 
     cudaMalloc(&dev_image, pixelcount * sizeof(glm::vec3));
     cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
 
     cudaMalloc(&dev_paths, pixelcount * sizeof(PathSegment));
 
-    cudaMalloc(&dev_geoms, scene->geoms.size() * sizeof(Geom));
-    cudaMemcpy(dev_geoms, scene->geoms.data(), scene->geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
+    // cudaMalloc(&dev_geoms, scene->geoms.size() * sizeof(Geom));
+    // cudaMemcpy(dev_geoms, scene->geoms.data(), scene->geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
 
     cudaMalloc(&dev_materials, scene->materials.size() * sizeof(Material));
     cudaMemcpy(dev_materials, scene->materials.data(), scene->materials.size() * sizeof(Material), cudaMemcpyHostToDevice);
@@ -173,41 +255,6 @@ void pathtraceInit(Scene* scene)
     cudaMemset(dev_intersections, 0, pixelcount * sizeof(ShadeableIntersection));
 
     // TODO: initialize any extra device memeory you need
-    if (h_envPixels != NULL) {
-        // fill envBuffer from h_envPixels
-        std::vector<glm::vec3> envBuffer(envWidth * envHeight);
-
-        for (int i = 0; i < envWidth * envHeight; ++i) {
-            envBuffer[i] = glm::vec3(
-                h_envPixels[i * envChannels + 0],
-                h_envPixels[i * envChannels + 1],
-                h_envPixels[i * envChannels + 2]
-            );
-        }
-
-        // set env dims on device
-        cudaMemcpyToSymbol(d_envWidth, &envWidth, sizeof(int));
-        cudaMemcpyToSymbol(d_envHeight, &envHeight, sizeof(int));
-
-        // allocate env map
-        glm::vec3* d_env_dev_ptr = nullptr;
-
-        // allocate device memory and copy host envBuffer into it
-        size_t envBytes = envWidth * envHeight * sizeof(glm::vec3);
-        cudaMalloc(&d_env_dev_ptr, envBytes);
-        cudaMemcpy(d_env_dev_ptr, envBuffer.data(), envBytes, cudaMemcpyHostToDevice);
-
-        // store device pointer into the device symbol so kernels can use it
-        cudaMemcpyToSymbol(d_environmentMap, &d_env_dev_ptr, sizeof(glm::vec3*));
-        
-        //cudaMemcpy(d_environmentMap, envBuffer.data(), envWidth * envHeight * sizeof(glm::vec3), cudaMemcpyHostToDevice);
-        stbi_image_free(h_envPixels);
-    }
-    //else {
-    //    environmentMapEnabled = false;
-    //    d_environmentMap = nullptr;
-    //}
-
 
     checkCUDAError("pathtraceInit");
 }
@@ -356,6 +403,10 @@ __global__ void computeIntersections(
                 t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
             }
             // TODO: add more intersection tests here... triangle? metaball? CSG?
+            else if (geom.type == MESH)
+            {
+				t = meshIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+			}
 
             // Compute the minimum t from the intersection tests to determine what
             // scene geometry object was hit first.

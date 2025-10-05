@@ -14,7 +14,8 @@ extern __device__ bool environmentMapEnabled;
 enum GeomType
 {
     SPHERE,
-    CUBE
+    CUBE,
+    MESH
 };
 
 struct Ray
@@ -22,6 +23,22 @@ struct Ray
     glm::vec3 origin;
     glm::vec3 direction;
 };
+
+
+struct AABB {
+    glm::vec3 min;
+    glm::vec3 max;
+};
+
+struct Mesh {
+    glm::vec3* vertices;
+    glm::ivec3* indices;
+    AABB bbox;
+    int materialId;
+	int vertexCount;
+	int indexCount;
+};
+
 
 struct Geom
 {
@@ -33,6 +50,9 @@ struct Geom
     glm::mat4 transform;
     glm::mat4 inverseTransform;
     glm::mat4 invTranspose;
+
+	Mesh mesh;
+	AABB bbox; // for mesh and cube
 };
 
 struct Material
@@ -100,4 +120,12 @@ struct ShadeableIntersection
   float t;
   glm::vec3 surfaceNormal;
   int materialId;
+};
+
+struct BVHNode {
+    AABB bbox;
+    int left;   // index of left child node, -1 if leaf
+    int right;  // index of right child node, -1 if leaf
+    int start;  // start index of triangles in this node
+    int count;  // number of triangles in this node
 };

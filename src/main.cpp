@@ -352,6 +352,7 @@ int main(int argc, char** argv)
 
     // Load scene file
     scene = new Scene(sceneFile);
+	printf("Loaded scene from %s\n", sceneFile);
 
     //Create Instance for ImGUIData
     guiData = new GuiDataContainer();

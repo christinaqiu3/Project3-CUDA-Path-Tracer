@@ -55,6 +55,15 @@ __host__ __device__ float boxIntersectionTest(
     glm::vec3& normal,
     bool& outside);
 
+
+__host__ __device__ float meshIntersectionTest(
+    Geom mesh,
+    Ray r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside);
+
+
 // CHECKITOUT
 /**
  * Test intersection between a ray and a transformed sphere. Untransformed,
