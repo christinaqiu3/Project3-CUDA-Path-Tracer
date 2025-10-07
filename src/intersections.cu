@@ -1,4 +1,10 @@
 #include "intersections.h"
+#include "sceneStructs.h"
+#include "glm/glm.hpp"
+#include "bvh.h"
+#include <iostream>
+#include <fstream>
+#include <string>
 
 __host__ __device__ float boxIntersectionTest(
     Geom box,
@@ -72,7 +78,7 @@ void solveQuadratic(float A, float B, float C, float& t0, float& t1) {
 }
 
 
-__device__ bool intersectAABB(const Ray& ray, const AABB& box, float& tNear, float& tFar) {
+__host__ __device__ bool intersectAABB(const Ray& ray, const AABB& box, float& tNear, float& tFar) {
     tNear = -FLT_MAX;
     tFar = FLT_MAX;
     for (int i = 0; i < 3; i++) {
@@ -95,7 +101,6 @@ __host__ __device__ bool intersectRayTriangle(
     const glm::vec3& v2,
     float& t, glm::vec3& n)
 {
-    const float EPSILON = 1e-6f;
     glm::vec3 edge1 = v1 - v0;
     glm::vec3 edge2 = v2 - v0;
     glm::vec3 h = glm::cross(dir, edge2);
@@ -120,6 +125,36 @@ __host__ __device__ bool intersectRayTriangle(
 
     return false;
 }
+
+//__device__ Tri* d_tris;
+//__device__ unsigned int* d_triIdxs;
+//__device__ BVHNode* d_bvhNodes;
+
+__host__ __device__ void intersectBVH(Ray& ray, const int nodeIdx, float& closestT, glm::vec3& hitNormal) {
+    const BVHNode& node = d_bvhNodes[nodeIdx];
+	AABB bbox = node.bbox;
+    float tFar;
+    if (!intersectAABB(ray, bbox, closestT, tFar)) return;
+
+    if (node.isLeaf()) {
+        for (int i = 0; i < node.triCount; ++i) {
+            const Tri& t = d_tris[d_triIdxs[node.firstTriIdx + i]];
+            float tHit;
+            glm::vec3 normal;
+            if (intersectRayTriangle(ray.origin, ray.direction, t.vertex0, t.vertex1, t.vertex2, tHit, normal)) {
+                if (tHit < closestT) {
+                    closestT = tHit;
+                    hitNormal = normal;
+                }
+            }
+        }
+    }
+    else {
+        intersectBVH(ray, node.leftNode, closestT, hitNormal);
+        intersectBVH(ray, node.leftNode+1, closestT, hitNormal);
+    }
+}
+
 __host__ __device__ float meshIntersectionTest(
     const Geom geom,
     const Ray r,
@@ -140,6 +175,7 @@ __host__ __device__ float meshIntersectionTest(
     // Loop triangles
     for (int i = 0; i < geom.mesh.indexCount; i++) {
         glm::ivec3 tri = geom.mesh.indices[i];
+
         glm::vec3 v0 = geom.mesh.vertices[tri.x];
         glm::vec3 v1 = geom.mesh.vertices[tri.y];
         glm::vec3 v2 = geom.mesh.vertices[tri.z];
@@ -157,6 +193,16 @@ __host__ __device__ float meshIntersectionTest(
             }
         }
     }
+
+    //Ray rayCopy = r; // Since intersectBVH updates ray.t
+    //intersectBVH(rayCopy, 0, t_min, normal);
+
+    //if (t_min < FLT_MAX) {
+    //    intersect = rayCopy.origin + t_min * rayCopy.direction;
+    //    outside = glm::dot(rayCopy.direction, normal) < 0.0f;
+    //    hit = true;
+    //}
+
 
     return hit ? t_min : -1.0f;
 }

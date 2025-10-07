@@ -22,7 +22,8 @@
 #include "stb_image_write.h"
 //#include "tiny_gltf.h"
 #include <cuda_runtime.h>
-
+#include "bvh.h"
+#include "scene.h"
 
 
 
@@ -120,6 +121,8 @@ static ShadeableIntersection* dev_intersections = NULL;
 __device__ glm::vec3* d_environmentMap = NULL;
 __device__ int d_envWidth;
 __device__ int d_envHeight;
+// BVH
+
 // ...
 
 void InitDataContainer(GuiDataContainer* imGuiData)
@@ -130,6 +133,7 @@ void InitDataContainer(GuiDataContainer* imGuiData)
 void pathtraceInit(Scene* scene)
 {
     hst_scene = scene;
+	//currentScene = scene;
 
     const Camera& cam = hst_scene->state.camera;
     const int pixelcount = cam.resolution.x * cam.resolution.y;
@@ -204,37 +208,45 @@ void pathtraceInit(Scene* scene)
     Geom h_geom;
     Mesh h_mesh;
 
+    std::vector<Geom> h_geoms = scene->geoms;
+
     // Extract mesh data from scene
-    for (const Geom& g : scene->geoms) {
+    for (Geom& g : h_geoms) {
         if (g.type == MESH) {
             h_vertices = std::vector<glm::vec3>(g.mesh.vertices, g.mesh.vertices + g.mesh.vertexCount);
+            glm::vec3* d_vertices = nullptr;
+            cudaMalloc(&d_vertices, h_vertices.size() * sizeof(glm::vec3));
+            cudaMemcpy(d_vertices, h_vertices.data(), h_vertices.size() * sizeof(glm::vec3), cudaMemcpyHostToDevice);
+
+
             h_indices = std::vector<glm::ivec3>(g.mesh.indices, g.mesh.indices + g.mesh.indexCount);
-            h_geom = g; // Copy the base Geom
-            break;
+            glm::ivec3* d_indices = nullptr;
+            cudaMalloc(&d_indices, h_indices.size() * sizeof(glm::ivec3));
+            cudaMemcpy(d_indices, h_indices.data(), h_indices.size() * sizeof(glm::ivec3), cudaMemcpyHostToDevice);
+
+
+            Mesh d_mesh;
+            d_mesh.vertices = d_vertices;
+            d_mesh.indices = d_indices;
+            d_mesh.vertexCount = g.mesh.vertexCount;
+            d_mesh.indexCount = g.mesh.indexCount;
+            d_mesh.bbox = g.mesh.bbox;
+            d_mesh.materialId = g.mesh.materialId;
+
+            // Update geom's mesh with device pointers
+            g.mesh = d_mesh;
         }
     }
 
-    // Allocate mesh vertex/index data on device
-    Mesh d_mesh;
-    cudaMalloc(&d_mesh.vertices, h_vertices.size() * sizeof(glm::vec3));
-    cudaMemcpy(d_mesh.vertices, h_vertices.data(), h_vertices.size() * sizeof(glm::vec3), cudaMemcpyHostToDevice);
-
-    cudaMalloc(&d_mesh.indices, h_indices.size() * sizeof(glm::ivec3));
-    cudaMemcpy(d_mesh.indices, h_indices.data(), h_indices.size() * sizeof(glm::ivec3), cudaMemcpyHostToDevice);
-
-    d_mesh.indexCount = h_indices.size();
-    d_mesh.vertexCount = h_vertices.size();
-    d_mesh.bbox = h_geom.mesh.bbox;
-    d_mesh.materialId = h_geom.materialid;
-
-    // Assign the device mesh into h_geom, then copy it to device
-    h_geom.mesh = d_mesh;
-
     // Copy all Geoms to device
-    cudaMalloc(&dev_geoms, scene->geoms.size() * sizeof(Geom));
-    std::vector<Geom> h_geoms = scene->geoms;
-    h_geoms[0] = h_geom; // Replace the original mesh geom with the one that has device pointers
+    cudaMalloc(&dev_geoms, h_geoms.size() * sizeof(Geom));
+    
     cudaMemcpy(dev_geoms, h_geoms.data(), h_geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
+
+    // BVH
+
+    //BuildBVH();
+    
 
 
 
@@ -263,17 +275,38 @@ void pathtraceFree()
 {
     cudaFree(dev_image);  // no-op if dev_image is null
     cudaFree(dev_paths);
-    cudaFree(dev_geoms);
     cudaFree(dev_materials);
     cudaFree(dev_intersections);
     // TODO: clean up any extra device memory you created
+    if (dev_geoms != nullptr) {
+        // Copy geoms back to host to get device pointers to mesh buffers
+        std::vector<Geom> h_geoms(hst_scene->geoms.size());
+        cudaMemcpy(h_geoms.data(), dev_geoms, hst_scene->geoms.size() * sizeof(Geom), cudaMemcpyDeviceToHost);
+
+        // Free each mesh’s device buffers
+        for (const Geom& g : h_geoms) {
+            if (g.type == MESH) {
+                if (g.mesh.vertices != nullptr) {
+                    cudaFree(g.mesh.vertices);
+                }
+                if (g.mesh.indices != nullptr) {
+                    cudaFree(g.mesh.indices);
+                }
+            }
+        }
+
+        // Free the device geom array itself
+        cudaFree(dev_geoms);
+        dev_geoms = nullptr;
+    }
+
     glm::vec3* h_env_dev_ptr = nullptr;
     cudaMemcpyFromSymbol(&h_env_dev_ptr, d_environmentMap, sizeof(glm::vec3*));
     if (h_env_dev_ptr != nullptr) {
         cudaFree(h_env_dev_ptr);
     }
-
-
+    //FreeBVH();
+    
     checkCUDAError("pathtraceFree");
 }
 
@@ -373,7 +406,6 @@ __global__ void computeIntersections(
     ShadeableIntersection* intersections)
 {
     int path_index = blockIdx.x * blockDim.x + threadIdx.x;
-
     if (path_index < num_paths)
     {
         PathSegment pathSegment = pathSegments[path_index];
@@ -607,7 +639,26 @@ void pathtrace(uchar4* pbo, int frame, int iter)
         cudaMemset(dev_intersections, 0, pixelcount * sizeof(ShadeableIntersection));
 
         // tracing
+        
         dim3 numblocksPathSegmentTracing = (num_paths + blockSize1d - 1) / blockSize1d;
+
+        // ERROR HAPPENING HERE
+        //std::vector<Geom> h_geoms_copy(hst_scene->geoms.size());
+        //cudaMemcpy(h_geoms_copy.data(), dev_geoms, hst_scene->geoms.size() * sizeof(Geom), cudaMemcpyDeviceToHost);
+
+        //for (size_t i = 0; i < h_geoms_copy.size(); i++) {
+        //    std::cout << "Geom " << i << ": type = " << h_geoms_copy[i].type
+        //        << ", vertexCount = " << h_geoms_copy[i].mesh.vertexCount
+        //        << ", indexCount = " << h_geoms_copy[i].mesh.indexCount
+        //        << ", materialId = " << h_geoms_copy[i].materialid
+        //        << std::endl;
+
+        //    // You cannot directly print pointers usefully, but you can check if they are null:
+        //    std::cout << "  vertices ptr: " << h_geoms_copy[i].mesh.vertices << std::endl;
+        //    std::cout << "  indices ptr: " << h_geoms_copy[i].mesh.indices << std::endl;
+        //}
+
+
         computeIntersections<<<numblocksPathSegmentTracing, blockSize1d>>> (
             depth,
             num_paths,
@@ -641,28 +692,28 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 		cudaDeviceSynchronize();
 
 		// Stream compact away terminated paths
-        PathSegment* new_end = thrust::remove_if(
+        /*PathSegment* new_end = thrust::remove_if(
             thrust::device,
             dev_paths,
             dev_paths + num_paths,
             PathTerminated()
         );
-        num_paths = new_end - dev_paths;
+        num_paths = new_end - dev_paths;*/
         checkCUDAError("thrust::remove_if");
 
 		// Sort paths by material ID
-        if (num_paths >= 0 && num_paths <= pixelcount)
+        /*if (num_paths >= 0 && num_paths <= pixelcount)
             thrust::sort_by_key(
                 thrust::device,
                 dev_paths,
                 dev_paths + num_paths,
                 dev_intersections,
                 MaterialIdComparator()
-            );
+            );*/
         checkCUDAError("thrust::sort");
 
         // TODO: should be based off stream compaction results.
-        if (depth > traceDepth || num_paths == 0)
+        if (depth > traceDepth)// || num_paths == 0)
             iterationComplete = true;
 
         if (guiData != NULL)

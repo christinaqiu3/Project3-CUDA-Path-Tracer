@@ -2,7 +2,7 @@
 
 #include "sceneStructs.h"
 
-#include <glm/glm.hpp>
+#include "utilities.h"
 #include <glm/gtx/intersect.hpp>
 
 
@@ -63,6 +63,22 @@ __host__ __device__ float meshIntersectionTest(
     glm::vec3& normal,
     bool& outside);
 
+__host__ __device__ bool intersectAABB(
+    const Ray& ray,
+    const AABB& box,
+    float& tmin,
+	float& tmax);
+
+__host__ __device__ bool intersectRayTriangle(
+    const glm::vec3& orig, const glm::vec3& dir,
+    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+	float& t, glm::vec3& baryPosition);
+
+__host__ __device__ void intersectBVH(
+    Ray& r,
+    int nodeIdx,
+    float& tMin,
+	glm::vec3& normal);
 
 // CHECKITOUT
 /**
@@ -80,3 +96,8 @@ __host__ __device__ float sphereIntersectionTest(
     glm::vec3& intersectionPoint,
     glm::vec3& normal,
     bool& outside);
+
+
+//extern std::vector<Tri> tri;
+//extern std::vector<unsigned int> triIdx;
+//extern std::vector<BVHNode> bvhNode;

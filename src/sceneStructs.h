@@ -124,8 +124,14 @@ struct ShadeableIntersection
 
 struct BVHNode {
     AABB bbox;
-    int left;   // index of left child node, -1 if leaf
-    int right;  // index of right child node, -1 if leaf
-    int start;  // start index of triangles in this node
-    int count;  // number of triangles in this node
+    int leftNode = -1;
+    int firstTriIdx = 0; // offset into triIdx[]
+    int triCount = 0;
+    __host__ __device__ bool isLeaf() const { return triCount > 0; }
+};
+
+struct Tri {
+    glm::vec3 vertex0, vertex1, vertex2;
+    glm::vec3 centroid;
+    int originalIndex; // optional
 };

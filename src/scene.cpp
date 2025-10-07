@@ -5,11 +5,18 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include "json.hpp"
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>  
+#include <glm/gtc/quaternion.hpp>      
+#include <glm/gtx/quaternion.hpp>
 
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <unordered_map>
+
+#include "bvh.h"
+#include "intersections.h"
 
 
 //#define TINYGLTF_NO_INCLUDE_STB_IMAGE
@@ -57,6 +64,39 @@ AABB computeAABB(const std::vector<glm::vec3>& verts) {
     return box;
 }
 
+glm::mat4 getLocalTransform(const tinygltf::Node& node) {
+    glm::mat4 matrix(1.0f);
+
+    if (node.matrix.size() == 16) {
+        for (int i = 0; i < 16; i++)
+            matrix[i / 4][i % 4] = static_cast<float>(node.matrix[i]);
+    }
+    else {
+        glm::vec3 translation(0.0f);
+        glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
+        glm::vec3 scale(1.0f);
+
+        if (node.translation.size() == 3)
+            translation = glm::vec3(node.translation[0], node.translation[1], node.translation[2]);
+        if (node.rotation.size() == 4)
+            rotation = glm::quat(node.rotation[3], node.rotation[0], node.rotation[1], node.rotation[2]);
+        if (node.scale.size() == 3)
+            scale = glm::vec3(node.scale[0], node.scale[1], node.scale[2]);
+
+        matrix = glm::translate(glm::mat4(1.0f), translation)
+            * glm::mat4_cast(rotation)
+            * glm::scale(glm::mat4(1.0f), scale);
+    }
+
+    return matrix;
+}
+
+
+// Device pointers
+// Host-side device pointers
+//Tri* dev_tris = nullptr;
+//unsigned int* dev_triIdx = nullptr;
+//BVHNode* dev_bvhNodes = nullptr;
 
 void Scene::loadFromGLTF(const std::string& gltfName)
 {
@@ -64,7 +104,7 @@ void Scene::loadFromGLTF(const std::string& gltfName)
     tinygltf::TinyGLTF loader;
     std::string err, warn;
     //bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, "../scenes/box.gltf");
-    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/box.glb");
+    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/sy_b_head.glb");
 
 
     std::vector<glm::vec3> vertices;
@@ -75,111 +115,195 @@ void Scene::loadFromGLTF(const std::string& gltfName)
         exit(EXIT_FAILURE);
     }
 
-    const tinygltf::Mesh& mesh = model.meshes[0]; // assuming first mesh
-    for (const auto& primitive : mesh.primitives) {
-        auto posAttr = primitive.attributes.find("POSITION");
-        if (posAttr == primitive.attributes.end()) {
-            std::cerr << "GLTF Error: 'POSITION' attribute missing in primitive." << std::endl;
-            continue;
-        }
+    for (const auto& node : model.nodes) {
+        if (node.mesh >= 0) {
+            const tinygltf::Mesh& mesh = model.meshes[node.mesh];
 
-        /*const float* buf = reinterpret_cast<const float*>(
-            &model.buffers[model.bufferViews[primitive.attributes.find("POSITION")->second].buffer].data[0]);
-        int stride = model.bufferViews[primitive.attributes.find("POSITION")->second].byteStride;
-        int count = model.accessors[primitive.attributes.find("POSITION")->second].count;*/
+            glm::mat4 nodeTransform = getLocalTransform(node);
+            std::vector<glm::vec3> vertices;  // Reset for each mesh
+            std::vector<glm::ivec3> indices;
+            for (const auto& primitive : mesh.primitives) {
+                auto posAttr = primitive.attributes.find("POSITION");
+                if (posAttr == primitive.attributes.end()) {
+                    std::cerr << "GLTF Error: 'POSITION' attribute missing in primitive." << std::endl;
+                    continue;
+                }
 
-        int posAccessorIndex = posAttr->second;
-        const tinygltf::Accessor& posAccessor = model.accessors[posAccessorIndex];
-        const tinygltf::BufferView& posBufferView = model.bufferViews[posAccessor.bufferView];
-        const tinygltf::Buffer& posBuffer = model.buffers[posBufferView.buffer];
+                /*const float* buf = reinterpret_cast<const float*>(
+                    &model.buffers[model.bufferViews[primitive.attributes.find("POSITION")->second].buffer].data[0]);
+                int stride = model.bufferViews[primitive.attributes.find("POSITION")->second].byteStride;
+                int count = model.accessors[primitive.attributes.find("POSITION")->second].count;*/
 
-        int count = posAccessor.count;
-        int stride = posBufferView.byteStride ? posBufferView.byteStride : sizeof(float) * 3; // fallback
+                int posAccessorIndex = posAttr->second;
+                const tinygltf::Accessor& posAccessor = model.accessors[posAccessorIndex];
+                const tinygltf::BufferView& posBufferView = model.bufferViews[posAccessor.bufferView];
+                const tinygltf::Buffer& posBuffer = model.buffers[posBufferView.buffer];
 
-        const unsigned char* dataPtr = posBuffer.data.data() + posBufferView.byteOffset + posAccessor.byteOffset;
-        const float* buf = reinterpret_cast<const float*>(dataPtr);
+                int count = posAccessor.count;
+                int stride = posBufferView.byteStride ? posBufferView.byteStride : sizeof(float) * 3; // fallback
 
-        for (int i = 0; i < count; i++) {
-            glm::vec3 v;
-            v.x = buf[i * stride / sizeof(float) + 0];
-            v.y = buf[i * stride / sizeof(float) + 1];
-            v.z = buf[i * stride / sizeof(float) + 2];
-            vertices.push_back(v);
-        }
+                const unsigned char* dataPtr = posBuffer.data.data() + posBufferView.byteOffset + posAccessor.byteOffset;
+                const float* buf = reinterpret_cast<const float*>(dataPtr);
 
-        const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
-        const tinygltf::BufferView& indexBufferView = model.bufferViews[indexAccessor.bufferView];
-        const tinygltf::Buffer& indexBuffer = model.buffers[indexBufferView.buffer];
+                for (int i = 0; i < count; i++) {
+                    glm::vec3 v;
+                    v.x = buf[i * stride / sizeof(float) + 0];
+                    v.y = buf[i * stride / sizeof(float) + 1];
+                    v.z = buf[i * stride / sizeof(float) + 2];
+                    glm::vec4 transformed = nodeTransform * glm::vec4(v.x, v.y, v.z, 1.0f);
+                    v = glm::vec3(transformed);
+                    vertices.push_back(v);
+                }
 
-        const unsigned char* indexData = indexBuffer.data.data() + indexBufferView.byteOffset + indexAccessor.byteOffset;
+                const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
+                const tinygltf::BufferView& indexBufferView = model.bufferViews[indexAccessor.bufferView];
+                const tinygltf::Buffer& indexBuffer = model.buffers[indexBufferView.buffer];
 
-        for (size_t i = 0; i < indexAccessor.count; i += 3) {
-            uint32_t i0, i1, i2;
+                const unsigned char* indexData = indexBuffer.data.data() + indexBufferView.byteOffset + indexAccessor.byteOffset;
 
-            switch (indexAccessor.componentType) {
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                i0 = static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(indexData)[i + 0]);
-                i1 = static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(indexData)[i + 1]);
-                i2 = static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(indexData)[i + 2]);
-                break;
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                i0 = static_cast<uint32_t>(reinterpret_cast<const uint16_t*>(indexData)[i + 0]);
-                i1 = static_cast<uint32_t>(reinterpret_cast<const uint16_t*>(indexData)[i + 1]);
-                i2 = static_cast<uint32_t>(reinterpret_cast<const uint16_t*>(indexData)[i + 2]);
-                break;
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                i0 = static_cast<uint32_t>(reinterpret_cast<const uint32_t*>(indexData)[i + 0]);
-                i1 = static_cast<uint32_t>(reinterpret_cast<const uint32_t*>(indexData)[i + 1]);
-                i2 = static_cast<uint32_t>(reinterpret_cast<const uint32_t*>(indexData)[i + 2]);
-                break;
-            default:
-                std::cerr << "Unsupported index component type!" << std::endl;
-                return;
+                /*for (size_t i = 0; i < indexAccessor.count; i += 3) {
+                    uint32_t i0, i1, i2;
+
+                    switch (indexAccessor.componentType) {
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                        i0 = static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(indexData)[i + 0]);
+                        i1 = static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(indexData)[i + 1]);
+                        i2 = static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(indexData)[i + 2]);
+                        break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                        i0 = static_cast<uint32_t>(reinterpret_cast<const uint16_t*>(indexData)[i + 0]);
+                        i1 = static_cast<uint32_t>(reinterpret_cast<const uint16_t*>(indexData)[i + 1]);
+                        i2 = static_cast<uint32_t>(reinterpret_cast<const uint16_t*>(indexData)[i + 2]);
+                        break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                        i0 = static_cast<uint32_t>(reinterpret_cast<const uint32_t*>(indexData)[i + 0]);
+                        i1 = static_cast<uint32_t>(reinterpret_cast<const uint32_t*>(indexData)[i + 1]);
+                        i2 = static_cast<uint32_t>(reinterpret_cast<const uint32_t*>(indexData)[i + 2]);
+                        break;
+                    default:
+                        std::cerr << "Unsupported index component type!" << std::endl;
+                        return;
+                    }
+
+                    indices.push_back(glm::ivec3(i0, i1, i2));
+                }*/
+                switch (indexAccessor.componentType) {
+                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+                    const uint8_t* buf = reinterpret_cast<const uint8_t*>(indexData);
+                    for (size_t i = 0; i < indexAccessor.count; i += 3) {
+                        indices.push_back(glm::ivec3(
+                            static_cast<uint32_t>(buf[i]),
+                            static_cast<uint32_t>(buf[i + 1]),
+                            static_cast<uint32_t>(buf[i + 2])
+                        ));
+                    }
+                    break;
+                }
+                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+                    const uint16_t* buf = reinterpret_cast<const uint16_t*>(indexData);
+                    for (size_t i = 0; i < indexAccessor.count; i += 3) {
+                        indices.push_back(glm::ivec3(
+                            static_cast<uint32_t>(buf[i]),
+                            static_cast<uint32_t>(buf[i + 1]),
+                            static_cast<uint32_t>(buf[i + 2])
+                        ));
+                    }
+                    break;
+                }
+                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+                    const uint32_t* buf = reinterpret_cast<const uint32_t*>(indexData);
+                    for (size_t i = 0; i < indexAccessor.count; i += 3) {
+                        indices.push_back(glm::ivec3(
+                            buf[i],
+                            buf[i + 1],
+                            buf[i + 2]
+                        ));
+                    }
+                    break;
+                }
+                }
+
             }
+            // LOADED VERTICES AND INDICES
+            Geom newGeom;
+            Mesh newMesh;
+            newMesh.vertexCount = vertices.size();
+            newMesh.indexCount = indices.size();
 
-            indices.push_back(glm::ivec3(i0, i1, i2));
+            newMesh.vertices = new glm::vec3[newMesh.vertexCount];
+            std::copy(vertices.begin(), vertices.end(), newMesh.vertices);
+
+            newMesh.indices = new glm::ivec3[newMesh.indexCount];
+            std::copy(indices.begin(), indices.end(), newMesh.indices);
+
+            Material defaultMat;
+            defaultMat.color = glm::vec3(0.7f, 0.7f, 0.7f); // light gray
+            defaultMat.specular.exponent = 0;
+            defaultMat.specular.color = glm::vec3(0.0f);
+            defaultMat.hasReflective = 0;
+            defaultMat.hasRefractive = 0;
+            defaultMat.indexOfRefraction = 1.0f;
+            defaultMat.emittance = 0.0f;
+
+            int matID = materials.size();
+            materials.push_back(defaultMat);
+
+            newGeom.type = MESH;
+            newGeom.materialid = matID;
+            newGeom.mesh = newMesh;
+            geoms.push_back(newGeom);
         }
-
     }
-	Geom newGeom;
-	Mesh newMesh;
-    newMesh.vertexCount = vertices.size();
-    newMesh.indexCount = indices.size();
 
-    newMesh.vertices = new glm::vec3[newMesh.vertexCount];
-    std::copy(vertices.begin(), vertices.end(), newMesh.vertices);
+	// BVH TRIANGLE DATA
+    //for (int i = 0; i < newMesh.indexCount; ++i) {
+    //    glm::ivec3 idx = newMesh.indices[i];
 
-    newMesh.indices = new glm::ivec3[newMesh.indexCount];
-    std::copy(indices.begin(), indices.end(), newMesh.indices);
+    //    Tri t;
+    //    t.vertex0 = newMesh.vertices[idx.x];
+    //    t.vertex1 = newMesh.vertices[idx.y];
+    //    t.vertex2 = newMesh.vertices[idx.z];
+    //    t.centroid = (t.vertex0 + t.vertex1 + t.vertex2) * (1.0f / 3.0f);
 
-    Material defaultMat;
-    defaultMat.color = glm::vec3(0.7f, 0.7f, 0.7f); // light gray
-    defaultMat.specular.exponent = 0;
-    defaultMat.specular.color = glm::vec3(0.0f);
-    defaultMat.hasReflective = 0;
-    defaultMat.hasRefractive = 0;
-    defaultMat.indexOfRefraction = 1.0f;
-    defaultMat.emittance = 0.0f;
+    //    tri.push_back(t);
+    //}
+    //// Fill triangle indices
+    //triIdx.resize(tri.size());
+    //for (int i = 0; i < tri.size(); ++i) {
+    //    triIdx[i] = i;
+    //}
+    //BuildBVH();
+    //std::cout << "BuildBVH called, tri count = " << tri.size() << "\n";
 
-    int matID = materials.size();
-    materials.push_back(defaultMat);
 
-	newGeom.type = MESH;
-	newGeom.materialid = matID;
-	newGeom.mesh = newMesh;
+
+    // Allocate
+    /*cudaMalloc(&dev_tris, tri.size() * sizeof(Tri));
+    cudaMalloc(&dev_triIdx, triIdx.size() * sizeof(unsigned int));
+    cudaMalloc(&dev_bvhNodes, bvhNode.size() * sizeof(BVHNode));
+
+    cudaMemcpy(dev_tris, tri.data(), tri.size() * sizeof(Tri), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_triIdx, triIdx.data(), triIdx.size() * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_bvhNodes, bvhNode.data(), bvhNode.size() * sizeof(BVHNode), cudaMemcpyHostToDevice);
+
+
+    cudaMemcpyToSymbol(d_tris, &dev_tris, sizeof(Tri*));
+    cudaMemcpyToSymbol(d_triIdxs, &dev_triIdx, sizeof(unsigned int*));
+    cudaMemcpyToSymbol(d_bvhNodes, &dev_bvhNodes, sizeof(BVHNode*));*/
+
 
     Camera& camera = state.camera;
     RenderState& state = this->state;
-	geoms.push_back(newGeom);
+	
 
     // Hardcoded camera config
     camera.resolution = glm::ivec2(800, 600);
     float fovy = 45.0f;  // in degrees
-    state.iterations = 100;
-    state.traceDepth = 5;
+    state.iterations = 1000;
+    state.traceDepth = 8;
     state.imageName = "rendered_output.png";
 
-    camera.position = glm::vec3(0.0f, 5.0f, 10.5f);
+    camera.position = glm::vec3(0.0f, -1.0f, 5.0f);
     camera.lookAt = glm::vec3(0.0f, 0.0f, 0.0f);
     camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
 
@@ -223,10 +347,12 @@ void Scene::loadFromGLTF(const std::string& gltfName)
         const glm::ivec3& tri = indices[i];
         std::cout << "tri[" << i << "]: " << tri.x << ", " << tri.y << ", " << tri.z << "\n";
     }*/
-
+    std::cout << "Scene has " << geoms.size() << " geometries." << std::endl;
+    for (const auto& g : geoms) {
+        std::cout << "Geom type: " << g.type << ", vertices: " << g.mesh.vertexCount << ", indices: " << g.mesh.indexCount << std::endl;
+    }
 
 }
-
 
 void Scene::loadFromJSON(const std::string& jsonName)
 {
