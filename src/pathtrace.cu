@@ -692,28 +692,28 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 		cudaDeviceSynchronize();
 
 		// Stream compact away terminated paths
-        /*PathSegment* new_end = thrust::remove_if(
+        PathSegment* new_end = thrust::remove_if(
             thrust::device,
             dev_paths,
             dev_paths + num_paths,
             PathTerminated()
         );
-        num_paths = new_end - dev_paths;*/
+        num_paths = new_end - dev_paths;
         checkCUDAError("thrust::remove_if");
 
 		// Sort paths by material ID
-        /*if (num_paths >= 0 && num_paths <= pixelcount)
+        if (num_paths >= 0 && num_paths <= pixelcount)
             thrust::sort_by_key(
                 thrust::device,
                 dev_paths,
                 dev_paths + num_paths,
                 dev_intersections,
                 MaterialIdComparator()
-            );*/
+            );
         checkCUDAError("thrust::sort");
 
         // TODO: should be based off stream compaction results.
-        if (depth > traceDepth)// || num_paths == 0)
+        if (depth > traceDepth || num_paths == 0)
             iterationComplete = true;
 
         if (guiData != NULL)
