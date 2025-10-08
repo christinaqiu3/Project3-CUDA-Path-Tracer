@@ -104,7 +104,7 @@ void Scene::loadFromGLTF(const std::string& gltfName)
     tinygltf::TinyGLTF loader;
     std::string err, warn;
     //bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, "../scenes/box.gltf");
-    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/SYLUS.glb");
+    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/sy_b_head.glb");
 
 
     std::vector<glm::vec3> vertices;
@@ -251,6 +251,16 @@ void Scene::loadFromGLTF(const std::string& gltfName)
             newGeom.type = MESH;
             newGeom.materialid = matID;
             newGeom.mesh = newMesh;
+
+            /*newGeom.mesh.bbox.min = glm::vec3(FLT_MAX);
+            newGeom.mesh.bbox.max = glm::vec3(-FLT_MAX);
+            for (const auto& v : newGeom.mesh.vertices) {
+                newGeom.mesh.bbox.min = glm::min(newGeom.mesh.bbox.min, v);
+                newGeom.mesh.bbox.max = glm::max(newGeom.mesh.bbox.max, v);
+            }*/
+
+
+
             geoms.push_back(newGeom);
         }
     }
