@@ -20,18 +20,19 @@ Base Features:
 
 Extra Features:
 
-Visual Improvments
-* 2️⃣ Refraction (e.g. glass/water) with Frensel effects using Schlick's approximation and glm::refract for Snell's law.
-* 2️⃣ Physically-based depth-of-field (by jittering rays within an aperture).
-* 4️⃣ Subsurface scattering.
-* 2️⃣ Environment map lighting.
-Mesh Improvments
-* 4️⃣ glTF arbitrary mesh loading and rendering.
+* Visual Improvments
+ * 2️⃣ Refraction (e.g. glass/water) with Frensel effects using Schlick's approximation and glm::refract for Snell's law.
+ * 2️⃣ Physically-based depth-of-field (by jittering rays within an aperture).
+ * 4️⃣ Subsurface scattering.
+ * 2️⃣ Environment map lighting.
+* Mesh Improvments
+ * 4️⃣ glTF arbitrary mesh loading and rendering.
 
 credit third party code: stb_image.h, stb_image_write.h, json.hpp and tiny_gltf.h.
 
-### Diffuse BSDF with Cosine-Weighted Sampling
+## Diffuse BSDF with Cosine-Weighted Sampling
 ![Diffuse](cornell.2025-09-27_19-45-52z.5000samp.png)
+
 The diffuse component models light that is scattered uniformly in all directions from a rough surface. This is implemented using the Lambertian reflectance model, where the outgoing radiance is proportional to the cosine of the angle between the surface normal N and the light direction L:
 ```
 Lo = kd * Li * max(0, dot(N, L))
@@ -46,11 +47,15 @@ color = albedo * traceRay(scatteredRay, sampleDir);
 ```
 Cosine-weighted sampling improves convergence by giving more samples to directions that contribute more to the reflected radiance, reducing variance compared to uniform hemisphere sampling.
 
-### Contiguous Memory Layout by Material Type
+[PBRTv4 9.2](https://pbr-book.org/4ed/Reflection_Models/Diffuse_Reflection)
+
+## Contiguous Memory Layout by Material Type
 4 material types: emitting, diffuse, specular, refractive, subsurface, reflective
 ![Off](cornell.2025-10-08_03-38-22z.1167samp.png)
+
 Material sorting off: 46.095 ms/frame, 21.7 FPS
 ![On](cornell.2025-10-08_03-29-33z.1551samp.png)
+
 Material sorting on: 147.893 ms/frame, 6.7 FPS 
 
 The slowdown in frame time likely occurs because the overhead of sorting paths outweighs the benefits when only a small number of material types is present. For scenes with more materials or deeper bounces, sorting may provide better memory coalescing and reduced branch divergence, but in this test, the performance trade-off was not worth it.
@@ -67,9 +72,10 @@ Benefits of this approach:
 
 This design ensures that shading operations are both efficient and parallel-friendly, which is critical for high-performance path tracing on the GPU.
 
-### Stochastic Antialiasing via Jittered Sampling
+## Stochastic Antialiasing via Jittered Sampling
 ![Before](cornell.2025-09-29_23-09-17z.478samp.png)
 ![After](cornell.2025-10-08_02-48-30z.1008samp.png)
+
 To reduce aliasing artifacts, each pixel is sampled multiple times with sub-pixel jittered offsets. Rather than sampling at the exact pixel center, the ray origin is randomly perturbed within the pixel footprint for each sample.
 
 This stochastic sampling produces a Monte Carlo estimate of the pixel color:
@@ -80,8 +86,11 @@ where ray_i originates from a slightly different position inside the pixel. Aver
 
 This approach is efficient on the GPU because each sample is independent and fully parallelizable, enabling high-quality antialiasing without significant memory overhead.
 
-### Specular Materials
+[notes](https://paulbourke.net/miscellaneous/raytracing/)
+
+## Specular Materials
 ![Specular](cornell.2025-10-08_01-53-15z.1341samp.png)
+
 The specular component represents mirror-like reflection of light from smooth surfaces. At each intersection point, the outgoing reflection ray R is computed using the incident view direction V and surface normal N:
 ```
 R = V - 2 * dot(V, N) * N
@@ -98,8 +107,11 @@ Lo = (1 - F) * L_diffuse + F * L_reflected
 ```
 where theta is the angle between V and N. Incorrect normal orientation or coordinate inversion can result in flipped reflections, while missing intersection returns can appear as black outlines.
 
-### Refraction with Frensel
+[PBRTv4 9.3](https://pbr-book.org/4ed/Reflection_Models/Specular_Reflection_and_Transmission)
+
+## Refraction with Frensel
 ![Refraction](cornell.2025-10-07_04-11-32z.5000samp.png)
+
 Refraction models light transmission through transparent materials such as glass or water. The direction of the transmitted ray T is determined by Snell’s Law:
 
 T = eta * I - (eta * dot(I, N) + sqrt(1 - eta^2 * (1 - dot(I, N)^2))) * N
@@ -125,9 +137,12 @@ Lo = F * L_reflected + (1 - F) * L_refracted
 
 This produces realistic glass behavior, with strong reflections at grazing angles and accurate light bending caused by refraction through the curved surface.
 
-### Physically-Based Depth of Field
+[Schlick's approximation](https://en.wikipedia.org/wiki/Schlick's_approximation)
+
+## Physically-Based Depth of Field
 ![lensRadius = 0.f](cornell.2025-10-08_03-24-20z.1272samp.png)
 ![lensRadius = 1.f](cornell.2025-10-08_03-16-57z.1599samp.png)
+
 Depth-of-field simulates the optical effect of a camera lens, where objects at the focal distance appear sharp, while objects closer or farther away appear blurred. This is achieved by jittering rays within a lens aperture to mimic the effect of a finite lens size.
 
 For each ray:
@@ -152,19 +167,24 @@ For a pinhole camera (lens radius = 0), rays pass directly through the camera or
 
 This physically-based method ensures that objects at the focal distance are in focus while others blur realistically according to their distance from the lens.
 
-### Subsurface Scattering
+[PBRTv4 5.2.3](https://pbr-book.org/4ed/Cameras_and_Film/Projective_Camera_Models#TheThinLensModelandDepthofField)
+
+## Subsurface Scattering
 ![Diffuse](cornell.2025-10-08_03-48-11z.372samp.png)
 ![Subsurface](cornell.2025-10-08_03-49-31z.306samp.png)
+
 Subsurface scattering (SSS) simulates light penetrating a surface, scattering internally, and exiting at a different point. This produces the soft, translucent appearance seen in materials like skin, wax, or marble.
 
-In the renderer, we approximate SSS by perturbing the light direction inside the material and attenuating the contribution based on thickness, distortion, and scattering scale:
+In the renderer, I approximate SSS by perturbing the light direction inside the material and attenuating the contribution based on thickness, distortion, and scattering scale:
 ```
 float sss = subsurface(lightDir, normal, viewVec, thickness, material);
 color += albedo * sss;
 ```
 This method captures the characteristic glow and soft shading of translucent surfaces without the full computational cost of volumetric simulation.
 
-### Environment Map Lighting
+[PBRTv3 5.6.2](https://www.pbr-book.org/3ed-2018/Color_and_Radiometry/Surface_Reflection#TheBSSRDF), [11.4](https://www.pbr-book.org/3ed-2018/Volume_Scattering/The_BSSRDF.html)
+
+## Environment Map Lighting
 Environment map lighting uses a 360° texture to provide illumination from the surrounding scene, simulating realistic ambient light and reflections.
 
 Rays that miss scene geometry sample the environment map based on their direction to determine incoming light:
@@ -174,7 +194,7 @@ color += throughput * envColor;
 ```
 To achieve full spherical coverage, the ray direction is converted to spherical coordinates (θ, φ) and mapped to UV coordinates on the environment texture. The texture is loaded using stb_image, supporting formats like PNG and HDR.
 
-### glTF Arbitrary Mesh Loading and Rendering
+## glTF Arbitrary Mesh Loading and Rendering
 Meshes are loaded from glTF or GLB files using the TinyGLTF library, which supports both ASCII (.gltf) and binary (.glb) formats. Each model may contain multiple nodes, each referencing a mesh, which in turn can have multiple primitives. Each primitive stores vertex attributes such as positions, normals, texture coordinates, and indices.
 
 In my implementation, memory is dynamically allocated for each mesh’s vertex and index data. For each node containing a mesh:
@@ -185,7 +205,7 @@ In my implementation, memory is dynamically allocated for each mesh’s vertex a
 * Extract indices from the primitive, correctly handling unsigned byte, unsigned short, or unsigned int component types.
 * Allocate memory for a Mesh structure and copy the vertex and index data.
 
-
+[tinygltf](https://github.com/syoyo/tinygltf/)
 
 
 
@@ -194,10 +214,6 @@ Performance impact of the feature.
 If you did something to accelerate the feature, what did you do and why?
 Compare your GPU version of the feature to a HYPOTHETICAL CPU version (you don't have to implement it!). Does it benefit or suffer from being implemented on the GPU?
 How might this feature be optimized beyond your current implementation?
-
-
-Don't talk about it like it's an assignment - don't say what is and isn't "extra" or "extra credit." Talk about what you accomplished.
-Be sure to back your claims for optimization with numbers and comparisons.
 
 
 
