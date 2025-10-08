@@ -53,6 +53,7 @@ Cosine-weighted sampling improves convergence by giving more samples to directio
 | Material sorting off: 46.095 ms/frame, 21.7 FPS | Material sorting on: 147.893 ms/frame, 6.7 FPS |
 |----------|-------------|
 | ![Off](cornell.2025-10-08_03-38-22z.1167samp.png) | ![On](cornell.2025-10-08_03-29-33z.1551samp.png) |
+
 6 material types: emitting, diffuse, specular, refractive, subsurface, reflective
 
 The slowdown in frame time likely occurs because the overhead of sorting paths outweighs the benefits when only a small number of material types is present. For scenes with more materials or deeper bounces, sorting may provide better memory coalescing and reduced branch divergence, but in this test, the performance trade-off was not worth it.
