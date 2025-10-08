@@ -64,7 +64,7 @@ void Scene::loadFromGLTF(const std::string& gltfName)
     tinygltf::TinyGLTF loader;
     std::string err, warn;
     //bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, "../scenes/box.gltf");
-    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/box.glb");
+    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/sy_b_head.glb");
 
 
     std::vector<glm::vec3> vertices;
@@ -175,7 +175,7 @@ void Scene::loadFromGLTF(const std::string& gltfName)
     // Hardcoded camera config
     camera.resolution = glm::ivec2(800, 600);
     float fovy = 45.0f;  // in degrees
-    state.iterations = 100;
+    state.iterations = 1000;
     state.traceDepth = 5;
     state.imageName = "rendered_output.png";
 
