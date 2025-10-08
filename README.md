@@ -197,8 +197,8 @@ color += throughput * envColor;
 To achieve full spherical coverage, the ray direction is converted to spherical coordinates (θ, φ) and mapped to UV coordinates on the environment texture. The texture is loaded using stb_image, supporting formats like PNG and HDR.
 
 ## glTF Arbitrary Mesh Loading and Rendering
+<img width="800" height="600" alt="sylus" src="https://github.com/user-attachments/assets/fe3e9101-7c2f-4d4c-a158-25d831f7f216" />
 
-![Sylus](sylus.png)
 Meshes are loaded from glTF or GLB files using the TinyGLTF library, which supports both ASCII (.gltf) and binary (.glb) formats. Each model may contain multiple nodes, each referencing a mesh, which in turn can have multiple primitives. Each primitive stores vertex attributes such as positions, normals, texture coordinates, and indices.
 
 In my implementation, memory is dynamically allocated for each mesh’s vertex and index data. For each node containing a mesh:
