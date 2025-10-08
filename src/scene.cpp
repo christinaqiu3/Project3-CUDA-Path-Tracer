@@ -304,6 +304,7 @@ void Scene::loadFromGLTF(const std::string& gltfName)
     state.imageName = "rendered_output.png";
 
     camera.position = glm::vec3(0.0f, -1.0f, 5.0f);
+    camera.position = glm::vec3(0.0f, 0.0f, 2.5f);
     camera.lookAt = glm::vec3(0.0f, 0.0f, 0.0f);
     camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
 
