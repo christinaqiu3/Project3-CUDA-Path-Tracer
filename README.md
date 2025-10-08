@@ -140,8 +140,10 @@ This produces realistic glass behavior, with strong reflections at grazing angle
 [Schlick's approximation](https://en.wikipedia.org/wiki/Schlick's_approximation)
 
 ## Physically-Based Depth of Field
-![lensRadius = 0.f](cornell.2025-10-08_03-24-20z.1272samp.png)
-![lensRadius = 1.f](cornell.2025-10-08_03-16-57z.1599samp.png)
+| lensRadius = 0.f | lensRadius = 1.f |
+|----------|-------------|
+| ![lensRadius = 0.f](cornell.2025-10-08_03-24-20z.1272samp.png) | ![lensRadius = 1.f](cornell.2025-10-08_03-16-57z.1599samp.png) |
+
 
 Depth-of-field simulates the optical effect of a camera lens, where objects at the focal distance appear sharp, while objects closer or farther away appear blurred. This is achieved by jittering rays within a lens aperture to mimic the effect of a finite lens size.
 
@@ -170,8 +172,9 @@ This physically-based method ensures that objects at the focal distance are in f
 [PBRTv4 5.2.3](https://pbr-book.org/4ed/Cameras_and_Film/Projective_Camera_Models#TheThinLensModelandDepthofField)
 
 ## Subsurface Scattering
-![Diffuse](cornell.2025-10-08_03-48-11z.372samp.png)
-![Subsurface](cornell.2025-10-08_03-49-31z.306samp.png)
+| Diffuse | Subsurface |
+|----------|-------------|
+| ![Diffuse](cornell.2025-10-08_03-48-11z.372samp.png) | ![Subsurface](cornell.2025-10-08_03-49-31z.306samp.png) |
 
 Subsurface scattering (SSS) simulates light penetrating a surface, scattering internally, and exiting at a different point. This produces the soft, translucent appearance seen in materials like skin, wax, or marble.
 
@@ -195,6 +198,7 @@ color += throughput * envColor;
 To achieve full spherical coverage, the ray direction is converted to spherical coordinates (θ, φ) and mapped to UV coordinates on the environment texture. The texture is loaded using stb_image, supporting formats like PNG and HDR.
 
 ## glTF Arbitrary Mesh Loading and Rendering
+![Sylus](rendered_output.png.2025-10-07_03-35-30z.1000samp.png)
 Meshes are loaded from glTF or GLB files using the TinyGLTF library, which supports both ASCII (.gltf) and binary (.glb) formats. Each model may contain multiple nodes, each referencing a mesh, which in turn can have multiple primitives. Each primitive stores vertex attributes such as positions, normals, texture coordinates, and indices.
 
 In my implementation, memory is dynamically allocated for each mesh’s vertex and index data. For each node containing a mesh:
@@ -205,11 +209,31 @@ In my implementation, memory is dynamically allocated for each mesh’s vertex a
 * Extract indices from the primitive, correctly handling unsigned byte, unsigned short, or unsigned int component types.
 * Allocate memory for a Mesh structure and copy the vertex and index data.
 
+To accelerate ray-mesh intersection, bounding volume intersection culling is implemented using an axis-aligned bounding box (AABB) per mesh. Each ray first tests against the mesh’s AABB (intersectAABB). If the ray intersects the bounding box I iterate over individual triangles with intersectRayTriangle.
+
+This significantly reduces the number of triangle intersection tests, particularly for large meshes or rays that miss the mesh entirely. On the GPU, this is efficient because many rays can be tested in parallel, while avoiding unnecessary work for triangles outside the bounding volume.
+
+Example pseudocode from my implementation:
+```
+if (USE_AABB_CULLING) {
+    float t0, t1;
+    if (!intersectAABB(ray, mesh.bbox, t0, t1)) return false;
+}
+
+for (int i = 0; i < mesh.indexCount; i++) {
+    glm::ivec3 tri = mesh.indices[i];
+    if (intersectRayTriangle(ray.origin, ray.direction, mesh.vertices[tri.x], mesh.vertices[tri.y], mesh.vertices[tri.z], t, bary)) {
+        // update closest intersection
+    }
+}
+```
+Performance analysis shows that enabling AABB culling reduces per-frame computation for complex meshes compared to brute-force triangle testing.
+
 [tinygltf](https://github.com/syoyo/tinygltf/)
 
 
 
-Overview write-up of the feature along with before/after images.
+
 Performance impact of the feature.
 If you did something to accelerate the feature, what did you do and why?
 Compare your GPU version of the feature to a HYPOTHETICAL CPU version (you don't have to implement it!). Does it benefit or suffer from being implemented on the GPU?
