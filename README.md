@@ -228,6 +228,10 @@ for (int i = 0; i < mesh.indexCount; i++) {
 ```
 Performance analysis shows that enabling AABB culling reduces per-frame computation for complex meshes compared to brute-force triangle testing.
 
+| AABB culling off: 545.946 ms/frame, 1.8 FPS | AABB culling on:  |
+|----------|-------------|
+| ![Off](cornell.2025-10-08_03-38-22z.1167samp.png) | ![On]() |
+
 [tinygltf](https://github.com/syoyo/tinygltf/)
 
 
