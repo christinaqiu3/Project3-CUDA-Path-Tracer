@@ -104,7 +104,7 @@ void Scene::loadFromGLTF(const std::string& gltfName)
     tinygltf::TinyGLTF loader;
     std::string err, warn;
     //bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, "../scenes/box.gltf");
-    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/sy_b_head.glb");
+    bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, "../scenes/SYLUS.glb");
 
 
     std::vector<glm::vec3> vertices;

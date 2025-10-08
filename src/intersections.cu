@@ -216,7 +216,7 @@ __host__ __device__ float sphereIntersectionTest(
     glm::vec3& normal,
     bool& outside)
 {
-    /*float radius = .5;
+    float radius = .5;
 
     glm::vec3 ro = multiplyMV(sphere.inverseTransform, glm::vec4(r.origin, 1.0f));
     glm::vec3 rd = glm::normalize(multiplyMV(sphere.inverseTransform, glm::vec4(r.direction, 0.0f)));
@@ -257,15 +257,15 @@ __host__ __device__ float sphereIntersectionTest(
 
     intersectionPoint = multiplyMV(sphere.transform, glm::vec4(objspaceIntersection, 1.f));
     normal = glm::normalize(multiplyMV(sphere.invTranspose, glm::vec4(objspaceIntersection, 0.f)));
-    //if (!outside)
-    //{
-    //    normal = -normal;
-    //}
+    if (!outside)
+    {
+        normal = -normal;
+    }
 
     return glm::length(r.origin - intersectionPoint);
-    */
+    
 
-    float radius = 0.5f;
+    /*float radius = 0.5f;
 
     // Transform ray to object space
     glm::vec3 ro = multiplyMV(sphere.inverseTransform, glm::vec4(r.origin, 1.0f));
@@ -305,5 +305,5 @@ __host__ __device__ float sphereIntersectionTest(
 
     // if (!outside) normal = -normal;
 
-    return glm::length(r.origin - intersectionPoint);
+    return glm::length(r.origin - intersectionPoint);*/
 }
