@@ -21,12 +21,12 @@ Base Features:
 Extra Features:
 
 * Visual Improvments
- * 2️⃣ Refraction (e.g. glass/water) with Frensel effects using Schlick's approximation and glm::refract for Snell's law.
- * 2️⃣ Physically-based depth-of-field (by jittering rays within an aperture).
- * 4️⃣ Subsurface scattering.
- * 2️⃣ Environment map lighting.
+  * 2️⃣ Refraction (e.g. glass/water) with Frensel effects using Schlick's approximation and glm::refract for Snell's law.
+  * 2️⃣ Physically-based depth-of-field (by jittering rays within an aperture).
+  * 4️⃣ Subsurface scattering.
+  * 2️⃣ Environment map lighting.
 * Mesh Improvments
- * 4️⃣ glTF arbitrary mesh loading and rendering.
+  * 4️⃣ glTF arbitrary mesh loading and rendering.
 
 credit third party code: stb_image.h, stb_image_write.h, json.hpp and tiny_gltf.h.
 
