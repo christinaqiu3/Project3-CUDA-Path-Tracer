@@ -50,13 +50,11 @@ Cosine-weighted sampling improves convergence by giving more samples to directio
 [PBRTv4 9.2](https://pbr-book.org/4ed/Reflection_Models/Diffuse_Reflection)
 
 ## Contiguous Memory Layout by Material Type
-4 material types: emitting, diffuse, specular, refractive, subsurface, reflective
-![Off](cornell.2025-10-08_03-38-22z.1167samp.png)
+| Material sorting off: 46.095 ms/frame, 21.7 FPS | Material sorting on: 147.893 ms/frame, 6.7 FPS |
+|----------|-------------|
+| ![Off](cornell.2025-10-08_03-38-22z.1167samp.png) | ![On](cornell.2025-10-08_03-29-33z.1551samp.png) |
 
-Material sorting off: 46.095 ms/frame, 21.7 FPS
-![On](cornell.2025-10-08_03-29-33z.1551samp.png)
-
-Material sorting on: 147.893 ms/frame, 6.7 FPS 
+6 material types: emitting, diffuse, specular, refractive, subsurface, reflective
 
 The slowdown in frame time likely occurs because the overhead of sorting paths outweighs the benefits when only a small number of material types is present. For scenes with more materials or deeper bounces, sorting may provide better memory coalescing and reduced branch divergence, but in this test, the performance trade-off was not worth it.
 
@@ -73,8 +71,9 @@ Benefits of this approach:
 This design ensures that shading operations are both efficient and parallel-friendly, which is critical for high-performance path tracing on the GPU.
 
 ## Stochastic Antialiasing via Jittered Sampling
-![Before](cornell.2025-09-29_23-09-17z.478samp.png)
-![After](cornell.2025-10-08_02-48-30z.1008samp.png)
+| Before | After |
+|----------|-------------|
+| ![Before](cornell.2025-09-29_23-09-17z.478samp.png) | ![After](cornell.2025-10-08_02-48-30z.1008samp.png) |
 
 To reduce aliasing artifacts, each pixel is sampled multiple times with sub-pixel jittered offsets. Rather than sampling at the exact pixel center, the ray origin is randomly perturbed within the pixel footprint for each sample.
 
@@ -228,6 +227,10 @@ for (int i = 0; i < mesh.indexCount; i++) {
 }
 ```
 Performance analysis shows that enabling AABB culling reduces per-frame computation for complex meshes compared to brute-force triangle testing.
+
+| AABB culling off: 545.946 ms/frame, 1.8 FPS | AABB culling on:  |
+|----------|-------------|
+| ![Off](cornell.2025-10-08_03-38-22z.1167samp.png) | ![On]() |
 
 [tinygltf](https://github.com/syoyo/tinygltf/)
 
